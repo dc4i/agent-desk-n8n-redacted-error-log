@@ -1,0 +1,196 @@
+{
+  "name": "Agent Desk \u2014 Redacted error log",
+  "meta": {
+    "description": "Error-workflow target that redacts secrets and writes a short internal log. Never stores raw payloads.",
+    "templateCredsSetupCompleted": false
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Agent Desk \u2014 Redacted error log\n\n**Gate:** Green (internal log). Point other workflows' *Error workflow* setting at this one.\n\nThe Code node strips common token and key patterns and drops request bodies. Still: never put live secrets in node parameters, and do not log `$json` from credential-bearing nodes.\n\n1. Replace IDs. Attach Notion and/or SMTP.\n2. In each other Agent Desk workflow, set Settings \u2192 Error workflow to this workflow (after you have saved it).\n3. Disable the Notion or Email node if you only want one destination.\n",
+        "width": 400,
+        "height": 460,
+        "color": 7
+      },
+      "id": "b0ea24f7-445b-58f7-b9f9-b724ea16f293",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        60
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "71999551-1055-530e-8e6e-66d197a9ac4c",
+      "name": "Error trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "62abd1b6-8ad9-5f00-85c8-4c5042494518",
+              "name": "errorLogDatabaseId",
+              "value": "REPLACE_WITH_ERROR_LOG_DATABASE_ID",
+              "type": "string"
+            },
+            {
+              "id": "0dee3f1d-afed-5bea-a7d3-6ccba4657081",
+              "name": "toEmail",
+              "value": "REPLACE_WITH_YOUR_EMAIL",
+              "type": "string"
+            },
+            {
+              "id": "759a4f08-1371-5c7e-9885-cbdf1bd9c57d",
+              "name": "fromEmail",
+              "value": "REPLACE_WITH_FROM_EMAIL",
+              "type": "string"
+            },
+            {
+              "id": "c0d34e37-d3fb-59b8-a8da-18b6916f9e4b",
+              "name": "notifyEmail",
+              "value": "true",
+              "type": "string"
+            },
+            {
+              "id": "fe8e30da-0ad0-57ac-bbb9-4237d057be77",
+              "name": "writeNotion",
+              "value": "true",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b96f38dc-ac67-5044-9c0f-0aabcc07f7ff",
+      "name": "Set your IDs",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        260,
+        280
+      ],
+      "notes": "Create a simple Notion database with a Title and a Notes (rich text) property, or disable the Notion node.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Redact common secrets, then prepare a short log row.\n// Never send the raw error payload to a database, email, or chat.\nconst cfg = $('Set your IDs').first().json;\n// Read from the Error trigger, not $input: \"Set your IDs\" does not pass the error payload through.\nconst raw = $('Error trigger').first().json;\n\nfunction redact(value) {\n  let s = typeof value === 'string' ? value : JSON.stringify(value, null, 2);\n  const patterns = [\n    /sk-[A-Za-z0-9_-]{16,}/g,\n    /xox[baprs]-[A-Za-z0-9-]{10,}/g,\n    /Bearer\\s+[A-Za-z0-9._\\-+/=]+/gi,\n    /-----BEGIN [A-Z ]+PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]+PRIVATE KEY-----/g,\n    /ntn_[A-Za-z0-9]+/g,\n    /secret_[A-Za-z0-9]+/g,\n    /(api[_-]?key|client_secret|access_token|refresh_token|password|authorization)\\s*[:=]\\s*(?:\\\\[\"']|[\"'])?[^\"'\\\\\\s]+(?:\\\\[\"']|[\"'])?/gi,\n  ];\n  for (const re of patterns) s = s.replace(re, '[REDACTED]');\n  // Truncate so a huge stack cannot become the log\n  if (s.length > 4000) s = s.slice(0, 4000) + '\\n\u2026 [truncated]';\n  return s;\n}\n\nconst exec = raw.execution || raw;\nconst err = exec.lastNodeExecuted\n  ? `${exec.lastNodeExecuted}: ${exec.error?.message || raw.message || 'error'}`\n  : (raw.message || raw.error?.message || 'Workflow error');\n\nconst redacted = redact({\n  workflowName: exec.workflowId ? '[id omitted]' : undefined,\n  lastNode: exec.lastNodeExecuted || raw.lastNodeExecuted,\n  message: err,\n  errorMessage: exec.error?.message || raw.error?.message,\n  // Do not include exec.data or request bodies\n});\n\nreturn [{\n  json: {\n    ...cfg,\n    title: `Error: ${String(err).slice(0, 120)}`,\n    body: redacted,\n    subject: 'Redacted workflow error (Agent Desk)',\n    briefMarkdown: [\n      'A linked workflow failed. This note is redacted and truncated.',\n      '',\n      redacted,\n      '',\n      'Do not paste raw execution data into this log.',\n    ].join('\\n'),\n  }\n}];\n"
+      },
+      "id": "e6a0125b-23c9-5840-8644-2de52b2ff530",
+      "name": "Redact the error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $json.errorLogDatabaseId }}",
+          "mode": "id"
+        },
+        "title": "={{ $json.title }}",
+        "simple": true,
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Notes|rich_text",
+              "textContent": "={{ $json.body }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7c9117f1-4001-5ce4-b5f6-dc988504cf3e",
+      "name": "Write Notion log",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        140
+      ],
+      "notes": "Disable if you do not want a Notion log. Attach a Notion credential after import.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.fromEmail }}",
+        "toEmail": "={{ $json.toEmail }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.briefMarkdown }}",
+        "options": {}
+      },
+      "id": "82bd41c2-a30a-530b-b061-8c14da786c88",
+      "name": "Email you the redacted note",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        800,
+        420
+      ],
+      "notes": "Goes only to your address. Disable if you only want Notion.",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Error trigger": {
+      "main": [
+        [
+          {
+            "node": "Set your IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set your IDs": {
+      "main": [
+        [
+          {
+            "node": "Redact the error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redact the error": {
+      "main": [
+        [
+          {
+            "node": "Write Notion log",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email you the redacted note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  }
+}
